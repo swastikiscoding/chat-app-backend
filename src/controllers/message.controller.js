@@ -1,6 +1,8 @@
 import User from "../models/user.model.js";
-import Message from "../models/message.model";
+import Message from "../models/message.model.js";
 import cloudinary from "../lib/cloudinary.js";
+import { getReceiverSocketId } from "../lib/socket.js";
+import { io } from "../lib/socket.js";
 
 export const getUsersForSidebar = async(req, res, next) => {
     try {
@@ -16,20 +18,30 @@ export const getUsersForSidebar = async(req, res, next) => {
 }
 
 export const getMessages = async (req, res) => {
-    try{
-        const {id: userToChatId} = req.params
-        const myId = req.user._id;
+    try {
+        const { id: userToChatId } = req.params;
+        const myId = req.user?._id;
+
+        if (!myId) {
+            return res.status(401).json({ message: "Unauthorized access. User not authenticated." });
+        }
+
         const messages = await Message.find({
             $or: [
-                {senderId: myId, recieverId : userToChatId},
-                {senderId: userToChatId , recieverId : myId },
-            ]
+                { senderId: myId, receiverId: userToChatId },
+                { senderId: userToChatId, receiverId: myId },
+            ],
         })
-        res.status(200).json(messages)
-    } catch(error){
-        res.status(500).json({message: 'Internal server error'});
+            .sort({ createdAt: 1 }) // Sort messages by creation date in ascending order
+            .exec();
+
+        return res.status(200).json(messages);
+    } catch (error) {
+        console.error("Error fetching messages:", error);
+        return res.status(500).json({ message: "Internal server error" });
     }
 };
+
 
 export const sendMessage = async(req, res)=>{
     try {
@@ -51,6 +63,11 @@ export const sendMessage = async(req, res)=>{
         })
 
         await newMessage.save();
+
+        const receiverSocketId = getReceiverSocketId(receiverId);
+        if(receiverSocketId){
+            io.to(receiverSocketId).emit("newMessage", newMessage)
+        }
 
         res.status(201).json(newMessage);
     } catch (error) {
